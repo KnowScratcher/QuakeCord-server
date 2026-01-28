@@ -2,6 +2,8 @@ import os
 import logger
 from fastapi.websockets import WebSocket
 from worker import history
+import paho.mqtt.client as mqtt
+import json
 
 basePath = os.path.dirname(__file__)
 """ The base dir """
@@ -35,3 +37,14 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 """ Websocket manager"""
+
+mqtt_client = mqtt.Client()
+""" MQTT client """ 
+with open(os.path.join(basePath, "config.json"), "r", encoding="utf-8") as f:
+    mqtt_config = json.load(f)
+mqtt_client.username_pw_set(mqtt_config.get("username", ""), mqtt_config.get("password", ""))
+mqtt_client.connect(mqtt_config.get("host", "localhost"), mqtt_config.get("port", 1883), mqtt_config.get("keepalive", 60))
+
+global station_config
+with open(os.path.join(basePath, "station.json"), "r", encoding="utf-8") as f:
+    station_config = json.load(f)

@@ -1,0 +1,9 @@
+{
+    "mqtt_client": {
+        "host": "localhost",
+        "port": 1883,
+        "keepalive": 60,
+        "username": "",
+        "password": ""
+    }
+}

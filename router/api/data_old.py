@@ -1,3 +1,5 @@
+"""DEPRECATED: Use router/api/data.py instead."""
+
 from fastapi import APIRouter
 from fastapi.background import BackgroundTasks
 from pydantic import BaseModel

@@ -1,2 +1,5 @@
 __pycache__/
 server/data/
+config.json
+station.json
+data/
