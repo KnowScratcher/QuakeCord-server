@@ -1,8 +1,10 @@
+import os
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from pydantic import BaseModel
 from dependencies import *
 import worker.peak_value as peak_value
+import worker.alert as alert
 import logger
 import time
 import pandas as pd
@@ -11,10 +13,31 @@ import numpy as np
 from anyio import to_thread
 import asyncio
 import threading
+import hmac
+import hashlib
+import secrets
+import numpy as np
+from collections import defaultdict
+import worker.filter as filter
 
 router = APIRouter()
+station_queues = defaultdict(asyncio.Queue)
+worker_tasks = {}
 rtm_data = {}
-
+last_interest = {}
+warnings = {}
+warnings_lock = False
+warnings_update = False
+messages = []
+dmc = DiscordMessageControl(discord_channels)
+warning_data = {
+    "prev_pgs": (0.0, 0.0),
+    "prev_result": [False] * 3,
+    "warnings": warnings,
+    "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
+}
+last_warning_time = 0
+COOL_DOWN_TIME = 20
 
 def appendCSV(data: pd.DataFrame, path: str, name: str):
     """
@@ -34,12 +57,90 @@ def appendCSV(data: pd.DataFrame, path: str, name: str):
     data.to_csv(p, index=False)
 
 
-async def process(data: dict):              
+async def station_worker(station_id: str):
+    """A persistent worker that processes data in order for a specific station."""
+    while True:
+        data = await station_queues[station_id].get()
+        try:
+            # Your existing process logic here
+            await process(data)
+        except Exception as e:
+            logger.error(f"Worker error for {station_id}: {e}")
+        finally:
+            station_queues[station_id].task_done()
+
+
+async def clean_warning_data():
+    for station in warnings:
+        if time.time() - warnings[station]["timestamp"] > 30:
+            warnings.pop(station, None)
+
+
+async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d array
+    global last_interest, warnings_lock, warnings_update, messages, warning_data, last_warning_time
+    try:
+        result, interest = alert.run_alert_tests(client_id, data, last_interest.get(client_id, 0))
+    except Exception as e:
+        logger.error(f"Error in alert_check: {e}")
+        result, interest = [], 0
+    last_interest[client_id] = interest
+    if any(result):
+        last_warning_time = time.time()
+        logger.warning(
+            f"Alert triggered! Interest: {interest}, Results: {result}")
+        try:
+            await clean_warning_data()
+        except Exception as e:
+            logger.error(f"Error in clean_warning_data: {e}")
+        station_data = station_config[client_id]
+        warnings[client_id] = {
+            "lat": round(station_data.get("lat", 0.0), 2),  # for location security
+            "lng": round(station_data.get("lng", 0.0), 2),
+            "pga": rtm_data.get(client_id, (0.0, 0.0))[0],
+            "pgv": rtm_data.get(client_id, (0.0, 0.0))[1],
+            "timestamp": time.time()
+        }
+        payload = {
+            "author": "TPSEM",
+            "type": "warning",
+            "data": list(warnings.values())
+        }
+        mqtt_client.publish("tpsem/warning", json.dumps(payload))
+
+        if not warnings_lock:
+            add_to_quake_buffer(client_id, get_buffer(client_id)[-500:] * ratio)
+            warnings_lock = True
+            await dmc.init()
+            await dmc.add_warning(warnings, result)
+        else:
+            add_to_quake_buffer(client_id, data*ratio)
+            if any(rtm_data.get(station, (0.0, 0.0))[0] - warning_data["prev_pgs"][0] > 5 or rtm_data.get(station, (0.0, 0.0))[1] - warning_data["prev_pgs"][1] > 5 for station in warnings):
+                warnings_update = True
+        if warnings_update:
+            warnings_update = False
+            await dmc.edit_warning_data(warnings, result)
+    else:
+        if (time.time() - last_warning_time) < 20:
+            add_to_quake_buffer(client_id, data*ratio)
+        else:
+            if warnings_lock:
+                warnings_lock = False
+                warnings.clear()
+                await dmc.send_plot()
+                reset_quake_buffer()
+
+
+async def process(data: dict):
     station_id = data["id"]
-    # 1. Convert to NumPy Array (Fast)
     raw_data = np.array([[i["dt"], i["x"], i["y"], i["z"]]
                         for i in data["data"]])
-    rtm_data[station_id] = peak_value.get_filtered_peak_value(raw_data[:, 1:4])
+    try:
+        rtm_data[station_id] = peak_value.get_filtered_peak_value(
+            raw_data[:, 1:4])
+    except Exception as e:
+        logger.error(f"Error in get_filtered_peak_value: {e}")
+        rtm_data[station_id] = (0.0, 0.0)
+    await alert_check(station_id, raw_data[:, 1:4])
     relative_ms = raw_data[:, 0]
 
     # clock check and overflow adjustment
@@ -62,7 +163,6 @@ async def process(data: dict):
 
     # 4. Find unique hours in this batch
     unique_hours = np.unique(hour_keys)
-
     for hour in unique_hours:
         # Mask the data that belongs to this specific hour
         mask = (hour_keys == hour)
@@ -76,71 +176,90 @@ async def process(data: dict):
         # Convert to DataFrame and append to CSV
         df = pd.DataFrame(final_table, columns=["time", "x", "y", "z"])
 
-        await manager.broadcast({
-            "dt": [time.strftime("%H:%M:%S", time.localtime(t)) for t in hour_timestamps],
-            "x": (hour_data[:, 1] * dataRatio).tolist(),
-            "y": (hour_data[:, 2] * dataRatio).tolist(),
-            "z": (hour_data[:, 3] * dataRatio).tolist()
-        })
+        # await manager.broadcast({
+        #     "dt": [time.strftime("%H:%M:%S", time.localtime(t)) for t in hour_timestamps],
+        #     "x": (hour_data[:, 1] * dataRatio).tolist(),
+        #     "y": (hour_data[:, 2] * dataRatio).tolist(),
+        #     "z": (hour_data[:, 3] * dataRatio).tolist()
+        # })
         logger.success(f"successfully processed data from {data['id']}.")
         p = hour.split(".")
         path = os.path.join("data", station_id, *p[:-1])
         name = f"{p[-1]}.csv"
         await to_thread.run_sync(appendCSV, df, path, name)
+    print("done")
 
 
 @router.websocket("/ws/data/{client_id}")
 async def websocket_data_endpoint(websocket: WebSocket, client_id: str, background: BackgroundTasks):
     await websocket.accept()
     logger.info(f"ESP32 {client_id} connected via WebSocket")
-
-    if client_id not in lastCountTime:
-        lastCountTime[client_id] = time.time()
-        logger.info(f"{client_id} auto-registered via WS")
-
+    nonce = secrets.token_hex(128)
+    payload = {
+        "type": "challenge",
+        "data": nonce
+    }
+    await websocket.send_json(payload)
     try:
+        data = await websocket.receive_json()
+        if data.get("type", "") != "auth_response":
+            await websocket.close(code=4003, reason="forbidden")
+            return  # Forbidden
+        client_data = data.get("data", {})
+        client_hash = client_data.get("hash", "")
+        secret = STATION_SECRETS.get(client_id, None)
+        if not secret:
+            await websocket.close(code=4003, reason="forbidden")
+            return  # Forbidden
+
+        expected_hash = hmac.new(
+            secret.encode(), nonce.encode(), hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(client_hash, expected_hash):
+            await websocket.close(code=4003, reason="forbidden")
+            return  # Forbidden
+        await websocket.send_text("Authenticated")
+        lastCountTime[client_id] = time.time(
+        ) - (client_data.get("time", 0) / 1000.0)
+        logger.success(f"ESP32 {client_id} authenticated successfully.")
         while True:
-            # 1. Receive JSON data from ESP32
-            data_json = await websocket.receive_text()
-            raw_payload = json.loads(data_json)
-            msg_type = raw_payload.get("type", "")
-            client_id = raw_payload.get("id", "")
-            data = raw_payload.get("data", [])
+            try:
+                # 1. Receive JSON data from ESP32
+                data_json = await websocket.receive_text()
+                raw_payload = json.loads(data_json)
+                msg_type = raw_payload.get("type", "")
+                client_id = raw_payload.get("id", "")
+                data = raw_payload.get("data", [])
 
-            if msg_type == "warning":
-                station_data = station_config[client_id]
-                payload = {
-                    "author": "TPSEM",
-                    "type": "eew",
-                    "data": {
-                        "lat": station_data["lat"],
-                        "lng": station_data["lng"],
-                        "pga": data.get("pga", 0.0),
-                        "pgv": data.get("pgv", 0.0),
-                    }
-                }
-                mqtt_client.publish("tpsem/warning", json.dumps(payload))
+                if msg_type == "data":
+                    if client_id in lastCountTime:
+                        logger.success(f"{client_id} is registered!")
+                        await station_queues[client_id].put(raw_payload)
+                        if client_id not in worker_tasks or worker_tasks[client_id].done():
+                            worker_tasks[client_id] = asyncio.create_task(
+                                station_worker(client_id))
+                        logger.info(
+                            f"Data length: {len(raw_payload['data'])}.")
+                    else:
+                        await websocket.send_text("restart")
+                        continue
 
-            elif msg_type == "data":
-                if client_id in lastCountTime:
-                    logger.success(f"{client_id} is registered!")
-                    asyncio.create_task(process(raw_payload))
-                    logger.info(f"Data length: {len(raw_payload['data'])}.")
-                else:
-                    await websocket.send_text("restart")
-                    continue
+                elif msg_type == "init":
+                    logger.info(f"{client_id} is registering...")
+                    lastCountTime[client_id] = time.time() - \
+                        data.get("time", 0)
+                    logger.success(f"{client_id} registered successfully.")
 
-            elif msg_type == "init":
-                logger.info(f"{client_id} is registering...")
-                lastCountTime[client_id] = time.time() - data.get("time", 0)
-                logger.success(f"{client_id} registered successfully.")
-
-            await websocket.send_text("ack")
+                await websocket.send_text("ack")
+            except json.JSONDecodeError as e:
+                logger.error("Invalid JSON received. Error: " + str(e))
+                await websocket.send_text("error: invalid json")
 
     except WebSocketDisconnect:
         logger.warning(f"ESP32 {client_id} disconnected")
     except Exception as e:
         logger.error(f"WS Error: {e}")
+
 
 def rtm_loop():
     logger.info("RTM MQTT loop started.")
@@ -153,8 +272,9 @@ def rtm_loop():
             data.append({
                 "name": station_data.get("name", ""),
                 "name_en": station_data.get("name_en", ""),
-                "lat": station_data.get("lat", 0.0),
-                "lng": station_data.get("lng", 0.0),
+                "lat": round(station_data.get("lat", 0.0), 2),
+                # for location security
+                "lng": round(station_data.get("lng", 0.0), 2),
                 "pga": pga,
                 "pgv": pgv
             })
@@ -164,5 +284,6 @@ def rtm_loop():
             "data": data
         }
         mqtt_client.publish("tpsem/rtm", json.dumps(payload))
+
 
 threading.Thread(target=rtm_loop, daemon=True).start()
