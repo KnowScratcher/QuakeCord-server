@@ -268,6 +268,7 @@ async def websocket_data_endpoint(websocket: WebSocket, client_id: str):
 
 def rtm_loop():
     logger.info("RTM MQTT loop started.")
+    mqtt_client = get_mqtt_client()
     while True:
         time.sleep(1)
         data = []
@@ -288,7 +289,8 @@ def rtm_loop():
             "type": "rtm",
             "data": data
         }
-        mqtt_client.publish("tpsem/rtm", json.dumps(payload))
+        res = mqtt_client.publish("tpsem/rtm", json.dumps(payload))
+        print(res)
 
 
 threading.Thread(target=rtm_loop, daemon=True).start()

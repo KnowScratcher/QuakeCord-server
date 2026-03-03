@@ -4,7 +4,8 @@ import logger
 from worker import history
 from fastapi import WebSocket
 from .config import basePath, dataRatio
-
+import paho.mqtt.client as mqtt
+import paho.mqtt.enums as mqttApi
 
 class ConnectionManager:
     """ Websocket control"""
@@ -30,3 +31,7 @@ class ConnectionManager:
                 self.activate.remove(connection)
 
 discord_channels = []
+mqtt_client = mqtt.Client()
+
+def get_mqtt_client():
+    return mqtt_client
