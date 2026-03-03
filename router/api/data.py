@@ -270,7 +270,7 @@ def rtm_loop():
     logger.info("RTM MQTT loop started.")
     mqtt_client = get_mqtt_client()
     while True:
-        time.sleep(1)
+        time.sleep(2)
         data = []
         for i in rtm_data:
             pga, pgv = rtm_data[i]
