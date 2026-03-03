@@ -5,5 +5,15 @@
         "keepalive": 60,
         "username": "",
         "password": ""
+    },
+    "discord": {
+        "token": "DISCORD_TOKEN",
+        "admin_users": [
+            USER_ID
+        ],
+        "admin_channel": CHANNEL_ID,
+        "data_channels": [
+            CHANNEL_IDs
+        ]
     }
 }

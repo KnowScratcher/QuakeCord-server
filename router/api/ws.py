@@ -7,12 +7,11 @@ from worker import history
 
 router = APIRouter()
 
-@router.websocket("/ws")
+@router.websocket("/ws/monitoring")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
-    while True:
-        try:
-            await websocket.receive_text()
-        except:
-            await manager.disconnect(websocket)
-            break
+    try:
+        while True:
+                await websocket.receive_text()
+    except:
+        await manager.disconnect(websocket)

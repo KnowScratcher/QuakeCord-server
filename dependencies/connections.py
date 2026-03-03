@@ -1,7 +1,6 @@
 import os
 import json
 import logger
-import paho.mqtt.client as mqtt
 from worker import history
 from fastapi import WebSocket
 from .config import basePath, dataRatio

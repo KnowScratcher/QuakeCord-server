@@ -1,6 +1,8 @@
 from discord import Embed
 import time
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for server environments
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import io
@@ -114,11 +116,15 @@ class DiscordMessageControl:
             await m.edit(embed=build_warning_embed(self.warnings))
 
     async def send_plot(self) -> None:
-        mx_client = max(self.warnings["warnings"], key=lambda station: max(float(self.warnings["warnings"][station]["pga"]), float(self.warnings["warnings"][station]["pgv"])))
-        image = create_quake_plot(get_quake_buffer(mx_client))
-        for i in self.channels:
-            await i.send(file=image, embed=build_end_embed())
-        self.messages.clear()
+        if self.warning_lock:
+            self.warning_lock = False
+            print(len(self.warnings["warnings"]), self.warnings)
+            mx_client = max(self.warnings["warnings"], key=lambda station: max(float(self.warnings["warnings"][station]["pga"]), float(self.warnings["warnings"][station]["pgv"])), default="CHY")
+            image = create_quake_plot(get_quake_buffer(mx_client))
+            for i in self.channels:
+                await i.send(file=image, embed=build_end_embed())
+            self.messages.clear()
+            # self.warnings.clear()
 
     async def add_warning(self, warning_stations: dict, result: list) -> None:
         self.warnings["prev_pgs"] = (max(float(warning_stations[station]["pga"]) for station in warning_stations), max(
@@ -127,6 +133,7 @@ class DiscordMessageControl:
         self.warnings["warnings"] = warning_stations
         self.warnings["time"] = time.strftime(
             '%Y-%m-%d %H:%M:%S', time.localtime())
+        print(self.warnings)
         if self.warning_lock:
             await self.edit_warning()
         else:
@@ -139,4 +146,5 @@ class DiscordMessageControl:
         self.warnings["prev_result"] = [a or b for a,
                                        b in zip(self.warnings["prev_result"], result)]
         self.warnings["warnings"] = warning_stations
+        print("edit ",self.warnings["warnings"])
         await self.edit_warning()

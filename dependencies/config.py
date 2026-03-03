@@ -6,6 +6,8 @@ basePath = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 """ The base dir """
 dataPath = os.path.join(basePath, "data")
 """ The data directory """
+reportPath = os.path.join(basePath, "reports")
+""" The report directory """
 dataRatio = 980.0 / 8028.6
 """ The experiment data for data -> gal """
 discordPath = os.path.join(basePath, "discord_bot")

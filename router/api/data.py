@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from dependencies import *
 import worker.peak_value as peak_value
 import worker.alert as alert
+import worker.report as report
 import logger
 import time
 import pandas as pd
@@ -61,6 +62,8 @@ async def station_worker(station_id: str):
     """A persistent worker that processes data in order for a specific station."""
     while True:
         data = await station_queues[station_id].get()
+        while not station_queues[station_id].empty():
+            data["data"].extend(station_queues[station_id].get_nowait()["data"])
         try:
             # Your existing process logic here
             await process(data)
@@ -125,8 +128,9 @@ async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d ar
         else:
             if warnings_lock:
                 warnings_lock = False
-                warnings.clear()
                 await dmc.send_plot()
+                report.generate_report(warning_data)
+                warnings.clear()
                 reset_quake_buffer()
 
 
@@ -151,6 +155,7 @@ async def process(data: dict):
             relative_ms[idx:] += 4294967.296
     anchor = lastCountTime[station_id]
     timestamps = anchor + (relative_ms / 1000.0)
+    logger.log(f"ESP timestamp: {relative_ms[-1]/1000}, last timestamp: {timestamps[-1]}, which in real time is {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(timestamps[-1]))}, now is {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}, q size: {station_queues[station_id].qsize()}")
     if (time.time() - anchor) > 4294900 and relative_ms[0] < 2000:
         lastCountTime[station_id] += 4294967.296
         logger.warning(
@@ -182,7 +187,7 @@ async def process(data: dict):
         #     "y": (hour_data[:, 2] * dataRatio).tolist(),
         #     "z": (hour_data[:, 3] * dataRatio).tolist()
         # })
-        logger.success(f"successfully processed data from {data['id']}.")
+        logger.success(f"successfully processed data from {data['id']}, hour {hour}.")
         p = hour.split(".")
         path = os.path.join("data", station_id, *p[:-1])
         name = f"{p[-1]}.csv"
@@ -191,7 +196,7 @@ async def process(data: dict):
 
 
 @router.websocket("/ws/data/{client_id}")
-async def websocket_data_endpoint(websocket: WebSocket, client_id: str, background: BackgroundTasks):
+async def websocket_data_endpoint(websocket: WebSocket, client_id: str):
     await websocket.accept()
     logger.info(f"ESP32 {client_id} connected via WebSocket")
     nonce = secrets.token_hex(128)
@@ -219,9 +224,9 @@ async def websocket_data_endpoint(websocket: WebSocket, client_id: str, backgrou
             await websocket.close(code=4003, reason="forbidden")
             return  # Forbidden
         await websocket.send_text("Authenticated")
-        lastCountTime[client_id] = time.time(
-        ) - (client_data.get("time", 0) / 1000.0)
+        lastCountTime[client_id] = time.time() - (client_data.get("time", 0) / 1000.0)
         logger.success(f"ESP32 {client_id} authenticated successfully.")
+        logger.log(f"ESP32 time is {client_data.get('time', 0)}, lastCountTime set to {lastCountTime[client_id]}")
         while True:
             try:
                 # 1. Receive JSON data from ESP32
