@@ -122,7 +122,6 @@ class DiscordMessageControl:
             mx_client = max(self.warnings["warnings"], key=lambda station: max(float(self.warnings["warnings"][station]["pga"]), float(self.warnings["warnings"][station]["pgv"])), default="CHY")
             image = create_quake_plot(get_quake_buffer(mx_client))
             for i in self.channels:
-                image.fp.seek(0)
                 await i.send(file=image, embed=build_end_embed())
             self.messages.clear()
             # self.warnings.clear()
