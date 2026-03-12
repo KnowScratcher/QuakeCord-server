@@ -116,21 +116,30 @@ async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d ar
             add_to_quake_buffer(client_id, get_buffer(client_id)[-500:] * ratio)
             warnings_lock = True
             await dmc.init()
-            await dmc.add_warning(warnings, result)
+            try:
+                await dmc.add_warning(warnings, result)
+            except:
+                logger.warning("Error sending to discord")
         else:
             add_to_quake_buffer(client_id, data*ratio)
             if any(rtm_data.get(station, (0.0, 0.0))[0] - warning_data["prev_pgs"][0] > 5 or rtm_data.get(station, (0.0, 0.0))[1] - warning_data["prev_pgs"][1] > 5 for station in warnings):
                 warnings_update = True
         if warnings_update:
             warnings_update = False
-            await dmc.edit_warning_data(warnings, result)
+            try:
+                await dmc.edit_warning_data(warnings, result)
+            except:
+                logger.warning("Error editing on discord")
     else:
         if (time.time() - last_warning_time) < 20:
             add_to_quake_buffer(client_id, data*ratio)
         else:
             if warnings_lock:
                 warnings_lock = False
-                await dmc.send_plot()
+                try:
+                    await dmc.send_plot()
+                except:
+                    logger.warning("Error sending to discord")
                 report.generate_report(warning_data)
                 warnings.clear()
                 reset_quake_buffer()
