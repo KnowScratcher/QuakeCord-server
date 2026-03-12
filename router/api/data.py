@@ -26,6 +26,7 @@ station_queues = defaultdict(asyncio.Queue)
 worker_tasks = {}
 rtm_data = {}
 last_interest = {}
+previous_data: dict[str, np.ndarray] = {}
 warnings = {}
 warnings_lock = False
 warnings_update = False
@@ -82,11 +83,12 @@ async def clean_warning_data():
 async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d array
     global last_interest, warnings_lock, warnings_update, messages, warning_data, last_warning_time
     try:
-        result, interest = alert.run_alert_tests(client_id, data, last_interest.get(client_id, 0))
+        result, interest, prev_data = alert.run_alert_tests(client_id, data, last_interest.get(client_id, 0), previous_data.get(client_id)) # type: ignore
     except Exception as e:
         logger.error(f"Error in alert_check: {e}")
-        result, interest = [], 0
+        result, interest, prev_data = [], 0, np.array([])
     last_interest[client_id] = interest
+    previous_data[client_id] = prev_data
     if any(result):
         last_warning_time = time.time()
         logger.warning(
@@ -114,21 +116,30 @@ async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d ar
             add_to_quake_buffer(client_id, get_buffer(client_id)[-500:] * ratio)
             warnings_lock = True
             await dmc.init()
-            await dmc.add_warning(warnings, result)
+            try:
+                await dmc.add_warning(warnings, result)
+            except:
+                logger.warning("Error sending to discord")
         else:
             add_to_quake_buffer(client_id, data*ratio)
             if any(rtm_data.get(station, (0.0, 0.0))[0] - warning_data["prev_pgs"][0] > 5 or rtm_data.get(station, (0.0, 0.0))[1] - warning_data["prev_pgs"][1] > 5 for station in warnings):
                 warnings_update = True
         if warnings_update:
             warnings_update = False
-            await dmc.edit_warning_data(warnings, result)
+            try:
+                await dmc.edit_warning_data(warnings, result)
+            except:
+                logger.warning("Error editing on discord")
     else:
         if (time.time() - last_warning_time) < 20:
             add_to_quake_buffer(client_id, data*ratio)
         else:
             if warnings_lock:
                 warnings_lock = False
-                await dmc.send_plot()
+                try:
+                    await dmc.send_plot()
+                except:
+                    logger.warning("Error sending to discord")
                 report.generate_report(warning_data)
                 warnings.clear()
                 reset_quake_buffer()
