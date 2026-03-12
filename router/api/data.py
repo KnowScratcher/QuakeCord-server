@@ -26,6 +26,7 @@ station_queues = defaultdict(asyncio.Queue)
 worker_tasks = {}
 rtm_data = {}
 last_interest = {}
+previous_data: dict[str, np.ndarray] = {}
 warnings = {}
 warnings_lock = False
 warnings_update = False
@@ -82,11 +83,12 @@ async def clean_warning_data():
 async def alert_check(client_id: str, data: np.ndarray) -> None:  # data = 3d array
     global last_interest, warnings_lock, warnings_update, messages, warning_data, last_warning_time
     try:
-        result, interest = alert.run_alert_tests(client_id, data, last_interest.get(client_id, 0))
+        result, interest, prev_data = alert.run_alert_tests(client_id, data, last_interest.get(client_id, 0), previous_data.get(client_id)) # type: ignore
     except Exception as e:
         logger.error(f"Error in alert_check: {e}")
-        result, interest = [], 0
+        result, interest, prev_data = [], 0, np.array([])
     last_interest[client_id] = interest
+    previous_data[client_id] = prev_data
     if any(result):
         last_warning_time = time.time()
         logger.warning(
