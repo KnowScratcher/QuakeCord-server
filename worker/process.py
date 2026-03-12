@@ -2,14 +2,12 @@ import pandas as pd
 import os
 import numpy as np
 import logger
-from dependencies import rtm_data, lastCountTime, station_queues, warnings, last_interest
+from dependencies import rtm_data, lastCountTime, station_queues, warnings, last_interest, previous_data
 import time
 import worker.peak_value as peak_value
 import worker.alert as alert
 from anyio import to_thread
 
-
-previous_data: dict[str, np.ndarray] = {}
 
 
 def appendCSV(data: pd.DataFrame, path: str, name: str):
@@ -30,6 +28,7 @@ def appendCSV(data: pd.DataFrame, path: str, name: str):
     data.to_csv(p, index=False)
 
 async def process(data: dict):
+    global previous_data
     station_id = data["id"]
     raw_data = np.array([[i["dt"], i["x"], i["y"], i["z"]]
                         for i in data["data"]])
@@ -39,12 +38,13 @@ async def process(data: dict):
     except Exception as e:
         logger.error(f"Error in get_filtered_peak_value: {e}")
         rtm_data[station_id] = (0.0, 0.0)
-    result, interest, prev_data = await alert.alert_check(station_id, raw_data[:, 1:4])
-    last_interest[station_id] = interest
-    previous_data[station_id] = prev_data
-    relative_ms = raw_data[:, 0]
+    result = await alert.alert_check(station_id, raw_data[:, 1:4])
+    if any(result):
+        await alert.alert_flow(station_id, raw_data[:, 1:4], result)
+    else:
+        await alert.normal_flow(station_id, raw_data[:, 1:4])
 
-    # clock check and overflow adjustment
+    relative_ms = raw_data[:, 0]
     diffs = np.diff(relative_ms, prepend=relative_ms[0])
     overflow_indices = np.where(diffs < -4000000)[0]  # big drop
     if len(overflow_indices) > 0:
@@ -58,24 +58,19 @@ async def process(data: dict):
         logger.warning(
             f"Overflow detected for {station_id}, adjusting anchor.")
 
-    # 3. Determine "Hour Keys" for every sample
-    # This creates an array of strings like "2026.1.19.19"
+    # check hour
     hour_keys = np.array(
         [time.strftime("%Y.%m.%d.%H", time.gmtime(t)) for t in timestamps])
 
-    # 4. Find unique hours in this batch
+    # find unique hour
     unique_hours = np.unique(hour_keys)
     for hour in unique_hours:
-        # Mask the data that belongs to this specific hour
         mask = (hour_keys == hour)
         hour_data = raw_data[mask]
         hour_timestamps = timestamps[mask]
 
-        # Combine timestamps back with x, y, z
-        # Result: [timestamp, x, y, z]
+        # [time, x, y, z]
         final_table = np.column_stack((hour_timestamps, hour_data[:, 1:]))
-
-        # Convert to DataFrame and append to CSV
         df = pd.DataFrame(final_table, columns=["time", "x", "y", "z"])
 
         # await manager.broadcast({

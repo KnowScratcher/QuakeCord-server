@@ -29,5 +29,5 @@ def rtm_loop():
         res = mqtt_client.publish("tpsem/rtm", json.dumps(payload))
         print(res)
 
-
-threading.Thread(target=rtm_loop, daemon=True).start()
+def start():
+    threading.Thread(target=rtm_loop, daemon=True).start()

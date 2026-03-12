@@ -21,10 +21,12 @@ import numpy as np
 from collections import defaultdict
 import worker.filter as filter
 import worker.process as process
+import worker.rtm as rtm
 
 router = APIRouter()
 worker_tasks = {}
 
+rtm.start()
 
 @router.websocket("/ws/data/{client_id}")
 async def websocket_data_endpoint(websocket: WebSocket, client_id: str):

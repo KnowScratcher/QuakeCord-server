@@ -1,5 +1,6 @@
 import time
 import asyncio
+import numpy as np
 from collections import defaultdict
 from .discord_message import DiscordMessageControl
 from .connections import discord_channels
@@ -15,3 +16,4 @@ warning_data = {
     "time": time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())
 }
 last_interest = {}
+previous_data: dict[str, np.ndarray] = {}

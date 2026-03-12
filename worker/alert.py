@@ -1,5 +1,5 @@
 import numpy as np
-from dependencies import (ratio, threshold, sample_rate,  warnings, station_config, rtm_data, mqtt_client, last_interest, dmc, warning_data, 
+from dependencies import (ratio, threshold, sample_rate,  warnings, station_config, rtm_data, mqtt_client, last_interest, dmc, warning_data, previous_data,
                           add_to_buffer, add_to_quake_buffer, get_buffer, reset_quake_buffer)
 from obspy.signal.trigger import classic_sta_lta, recursive_sta_lta, trigger_onset
 from obspy import Trace
@@ -110,7 +110,7 @@ async def clean_warning_data():
         if time.time() - warnings[station]["timestamp"] > 30:
             warnings.pop(station, None)
 
-async def alert_check(client_id: str, data: np.ndarray) -> tuple[list, int, np.ndarray]:  # data = 3d array
+async def alert_check(client_id: str, data: np.ndarray) -> list:  # data = 3d array
     """run alert tests and handle exceptions
 
     Args:
@@ -126,14 +126,16 @@ async def alert_check(client_id: str, data: np.ndarray) -> tuple[list, int, np.n
     except Exception as e:
         logger.error(f"Error in alert_check: {e}")
         result, interest, prev_data = [], 0, np.array([])
-    return (result, interest, prev_data)
+    last_interest[client_id] = interest
+    previous_data[client_id] = prev_data
+    return result
 
 
-async def alert_flow(client_id:str, data:np.ndarray, interest:int, result:list):
+async def alert_flow(client_id:str, data:np.ndarray, result:list) -> None:
     global warnings_lock, last_warning_time, warnings_lock, warnings_update
     last_warning_time = time.time()
     logger.warning(
-        f"Alert triggered! Interest: {interest}, Results: {result}")
+        f"Alert triggered! Interest: {last_interest.get(client_id, '?')}, Results: {result}")
     try:
         await clean_warning_data()
     except Exception as e:
@@ -171,7 +173,8 @@ async def alert_flow(client_id:str, data:np.ndarray, interest:int, result:list):
             await dmc.edit_warning_data(warnings, result)
         except:
             logger.warning("Error editing on discord")
-async def normal_flow(client_id:str, data:np.ndarray):
+
+async def normal_flow(client_id:str, data:np.ndarray) -> None:
     global warnings_lock, last_warning_time
     if (time.time() - last_warning_time) < COOL_DOWN_TIME:
         add_to_quake_buffer(client_id, data*ratio)
