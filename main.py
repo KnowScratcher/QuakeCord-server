@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 import discord
 from discord.ext import commands
-from dependencies import discordPath, discord_channels, get_mqtt_client, config
+from dependencies import discordPath, discord_channels, config, mqtt_client
 import logger  # Using your existing logger
 import uvicorn
 from router import webpage
@@ -80,7 +80,6 @@ def on_publish(client, userdata, mid, reason_code=None, properties=None):
 async def lifespan(app: FastAPI):
     print("Starting Discord bot...")
     asyncio.create_task(bot.start(config['discord']['token']))
-    mqtt_client = get_mqtt_client()
     # mqtt_client.on_connect = on_connect
     # mqtt_client.on_publish = on_publish
     # print("the username is: "+config["mqtt_client"].get("username", ""))

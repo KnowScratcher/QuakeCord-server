@@ -1,5 +1,5 @@
 import numpy as np
-from dependencies import (ratio, threshold, sample_rate,  warnings, station_config, rtm_data, mqtt_client, last_interest, dmc, warning_data, previous_data,
+from dependencies import (ratio, threshold, sample_rate,  warnings, station_config, rtm_data, mqtt_client, last_interest, dmc, warning_data,
                           add_to_buffer, add_to_quake_buffer, get_buffer, reset_quake_buffer)
 from obspy.signal.trigger import classic_sta_lta, recursive_sta_lta, trigger_onset
 from obspy import Trace
@@ -14,7 +14,7 @@ warnings_update = False
 last_warning_time = 0
 COOL_DOWN_TIME = 20
 
-def run_alert_tests(station_id: str, data: np.ndarray, interest=0, previous_data: np.ndarray = np.array([0, 0, 0])) -> tuple[list, int, np.ndarray]:
+def run_alert_tests(station_id: str, data: np.ndarray, interest=0) -> tuple[list, int]:
     """
     Check if the alert condition is met based on the given data.
     Args:
@@ -23,7 +23,7 @@ def run_alert_tests(station_id: str, data: np.ndarray, interest=0, previous_data
     Returns:
         run_alert_tests (tuple[bool, int]): A tuple where the first element is a boolean indicating if the alert condition is met, and the second element is the final interest value.
     """
-    interest_result = run_interest(data, interest, previous_data)
+    interest_result = run_interest(data, interest)
     samples = data.shape[0]
     buffer = add_to_buffer(station_id, data)
     data = filter.filter_data(data, 3, 13.5)
@@ -34,7 +34,7 @@ def run_alert_tests(station_id: str, data: np.ndarray, interest=0, previous_data
         sta_lta_result = run_sta_lta(buffer, sampling_rate=sample_rate, samples=samples)
     result = [interest_result[0], r_sta_lta_result, sta_lta_result]
 
-    return (result, interest_result[1], interest_result[2])
+    return (result, interest_result[1])
 
 
 def run_r_sta_lta(data: np.ndarray, sampling_rate=100, samples: int = 100) -> bool:
@@ -78,7 +78,7 @@ def run_sta_lta(data: np.ndarray, sampling_rate=100, samples: int = 100) -> bool
     return any([len(trigger_x) > 0, len(trigger_y) > 0, len(trigger_z) > 0])
 
 
-def run_interest(data: np.ndarray, interest=0, previous_data: np.ndarray = np.array([0, 0, 0])) -> tuple[bool, int, np.ndarray]:
+def run_interest(data: np.ndarray, interest=0) -> tuple[bool, int]:
     """
     Calculate the interest value based on the given data.
     Args:
@@ -90,7 +90,7 @@ def run_interest(data: np.ndarray, interest=0, previous_data: np.ndarray = np.ar
         run_interest (tuple[bool, int]): A tuple where the first element is a boolean indicating if the alert condition is met, and the second element is the final interest value.
     """
     scaled_data = data[:, :3] * ratio
-    diffs = np.diff(scaled_data, axis=0, prepend=previous_data)
+    diffs = np.diff(scaled_data, axis=0)
     distances = np.sqrt(np.einsum("ij,ij->i", diffs, diffs))  # sqrt(x^2 + y^2 + z^2)
     it = np.empty(len(distances), dtype=np.int32)
 
@@ -103,7 +103,7 @@ def run_interest(data: np.ndarray, interest=0, previous_data: np.ndarray = np.ar
             interest = 0
         it[idx] = interest
     trigger = trigger_onset(np.array(it), 6, 0)
-    return (len(trigger) > 0, interest, scaled_data[-1])
+    return (len(trigger) > 0, interest)
 
 async def clean_warning_data():
     for station in warnings:
@@ -122,12 +122,12 @@ async def alert_check(client_id: str, data: np.ndarray) -> list:  # data = 3d ar
     """
     global last_interest, warnings_lock, warnings_update,  warning_data, last_warning_time
     try:
-        result, interest, prev_data =  run_alert_tests(client_id, data, last_interest.get(client_id, 0), previous_data.get(client_id)) # type: ignore
+        print(last_interest.get(client_id, 0))
+        result, interest =  run_alert_tests(client_id, data, last_interest.get(client_id, 0)) # type: ignore
     except Exception as e:
         logger.error(f"Error in alert_check: {e}")
-        result, interest, prev_data = [], 0, np.array([])
+        result, interest = [], 0
     last_interest[client_id] = interest
-    previous_data[client_id] = prev_data
     return result
 
 

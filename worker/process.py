@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import numpy as np
 import logger
-from dependencies import rtm_data, lastCountTime, station_queues, warnings, last_interest, previous_data
+from dependencies import rtm_data, lastCountTime, station_queues, warnings, last_interest
 import time
 import worker.peak_value as peak_value
 import worker.alert as alert
