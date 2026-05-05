@@ -32,6 +32,3 @@ class ConnectionManager:
 
 discord_channels = []
 mqtt_client = mqtt.Client()
-
-def get_mqtt_client():
-    return mqtt_client
